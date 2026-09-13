@@ -32,11 +32,6 @@ current settings back in and pre-ticks them.
 To go back to stock, run it and click Uninstall.
 
 
-DISTRIBUTING IT
-"BO3 Audio Fix Installer.exe" is the only file you need to share. The proxy
-DLL is embedded inside the executable, so it works on its own from any
-folder, USB stick or download. There is nothing to install alongside it.
-
 Requirements on the target PC:
   - 64-bit Windows
   - .NET Framework 4.x (built into Windows 10 and 11 - nothing to install)
