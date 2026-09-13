@@ -12,7 +12,9 @@
 //   showall=1          disable all filtering (devices pass through unchanged).
 //   log=1              append a report to bo3_audio.log each time the game
 //                      scans devices (useful for verifying / tuning).
-// If no keep= lines are present, a built-in default keep list is used.
+// If no keep= lines are present, NO filtering is applied and the game sees
+// every device, exactly as it would without this DLL. That is deliberate: a
+// missing or unreadable config must never starve the game of audio devices.
 
 #define WIN32_LEAN_AND_MEAN
 #define _WINMM_            // make WINMMAPI expand to nothing (we ARE winmm)
@@ -22,6 +24,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <iterator>
 #include "exports_gen.h"   // /EXPORT pragmas: forwarders + our overrides
 
 // ---- real winmm entry points we call through ----
@@ -72,10 +75,35 @@ static void ownDir(std::wstring &dir) {
 }
 
 static void loadConfig() {
-    std::wifstream f((g_dir + L"bo3_audio.cfg").c_str());
+    // Read raw bytes and decode explicitly. A classic-locale wide stream
+    // mangles anything outside ASCII, which silently breaks keep= matching on
+    // non-Western systems. UTF-8 first, system ANSI as a fallback so configs
+    // written by earlier versions still load.
+    std::ifstream f((g_dir + L"bo3_audio.cfg").c_str(), std::ios::binary);
     if (!f.is_open()) return;
+    std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (bytes.size() >= 3 && (unsigned char)bytes[0] == 0xEF
+                          && (unsigned char)bytes[1] == 0xBB
+                          && (unsigned char)bytes[2] == 0xBF) bytes.erase(0, 3);
+    if (bytes.empty()) return;
+
+    std::wstring all;
+    int need = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                   bytes.data(), (int)bytes.size(), NULL, 0);
+    if (need > 0) {
+        all.resize(need);
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            bytes.data(), (int)bytes.size(), &all[0], need);
+    } else {
+        need = MultiByteToWideChar(CP_ACP, 0, bytes.data(), (int)bytes.size(), NULL, 0);
+        if (need <= 0) return;
+        all.resize(need);
+        MultiByteToWideChar(CP_ACP, 0, bytes.data(), (int)bytes.size(), &all[0], need);
+    }
+
+    std::wistringstream stream(all);
     std::wstring line;
-    while (std::getline(f, line)) {
+    while (std::getline(stream, line)) {
         line = trim(line);
         if (line.empty() || line[0] == L'#' || line[0] == L';') continue;
         size_t eq = line.find(L'=');
@@ -89,21 +117,9 @@ static void loadConfig() {
     }
 }
 
-// built-in defaults (lowercase, matched as substrings of the possibly
-// 31-char-truncated device name). Tuned for this PC's real hardware.
-static bool defaultKeep(const std::wstring &n) {
-    static const wchar_t *k[] = {
-        L"usb2.0 device",      // headset in/out
-        L"esi audio device",   // Amber i1 interface (main speaker + 1&2)
-        L"amber i1 1&2",       // Amber capture
-        L"voicemeeter input",  // default Windows output (keep it selectable)
-        L"realtek",            // onboard, in case it's ever the default
-        L"nvidia high",        // HDMI/DP monitor audio (first only via keep)
-    };
-    for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++)
-        if (n.find(k[i]) != std::wstring::npos) return true;
-    return false;
-}
+// There is deliberately no built-in keep list. Hard-coding one author's
+// hardware here would filter every other machine down to nothing; with no
+// configured keeps the filter passes everything through (see keepName).
 
 static BOOL CALLBACK initOnce(PINIT_ONCE, PVOID, PVOID *) {
     ownDir(g_dir);
@@ -134,7 +150,9 @@ static bool keepName(const wchar_t *nameW) {
     std::wstring n = lower(nameW);
     for (size_t i = 0; i < g_block.size(); i++)
         if (!g_block[i].empty() && n.find(g_block[i]) != std::wstring::npos) return false;
-    if (g_keep.empty()) return defaultKeep(n);
+    // No keeps configured (missing, empty or unreadable config): show
+    // everything. Fail open - the game behaves as if this DLL weren't here.
+    if (g_keep.empty()) return true;
     for (size_t i = 0; i < g_keep.size(); i++)
         if (!g_keep[i].empty() && n.find(g_keep[i]) != std::wstring::npos) return true;
     return false;

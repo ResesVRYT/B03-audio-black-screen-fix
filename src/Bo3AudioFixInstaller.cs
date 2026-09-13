@@ -192,11 +192,18 @@ namespace Bo3AudioFix
         }
 
         // Names that are virtual / rarely needed by the game.
+        // These are substring-matched, so every entry must be specific enough
+        // that it cannot collide with real hardware. Deliberately NOT here:
+        //   "vaio"        - also matches Sony VAIO onboard audio
+        //   "obs"         - three letters, matches far too much
+        //   "cable"       - already covered by "vb-audio"
+        //   "nvidia high" - HDMI/DisplayPort audio is a real output for anyone
+        //                   playing through a TV or monitor speakers
         private static readonly string[] VirtualPatterns = new string[] {
-            "voicemeeter","vb-audio","cable","virtual","oculus","sonar","steelseries",
-            "krisp","voicemod","loopback","steam streaming","splitcam","ivcam","parsec",
-            "obsbot","nvidia high","meta ","vrchat","wave link","banana","potato",
-            "vaio","discord","obs","streamlabs","synchronous","rust desk","rustdesk"
+            "voicemeeter","vb-audio","virtual","oculus","meta quest","sonar",
+            "steelseries","krisp","voicemod","loopback","steam streaming",
+            "splitcam","ivcam","parsec","obsbot","streamlabs","vrchat",
+            "wave link","banana","potato","rustdesk","remote audio"
         };
 
         public static bool IsVirtual(string name)
@@ -430,8 +437,20 @@ namespace Bo3AudioFix
         {
             if (string.IsNullOrEmpty(name)) return false;
             string n = name.ToLowerInvariant();
-            if (!string.IsNullOrEmpty(defaultOut) && n.StartsWith(defaultOut.ToLowerInvariant())) return true;
-            if (!string.IsNullOrEmpty(defaultIn) && n.StartsWith(defaultIn.ToLowerInvariant())) return true;
+            return MatchesEndpoint(n, defaultOut) || MatchesEndpoint(n, defaultIn);
+        }
+
+        // winmm and the Core Audio API name the same device differently (and
+        // winmm truncates to 31 chars), so compare generously in both
+        // directions. Getting this wrong un-ticks somebody's real output.
+        private static bool MatchesEndpoint(string deviceName, string endpoint)
+        {
+            if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(deviceName)) return false;
+            string e = endpoint.ToLowerInvariant();
+            if (deviceName.StartsWith(e) || e.StartsWith(deviceName)) return true;
+            if (e.Length >= 6 && deviceName.Contains(e)) return true;
+            int n = Math.Min(Math.Min(deviceName.Length, e.Length), 20);
+            if (n >= 6 && deviceName.Substring(0, n) == e.Substring(0, n)) return true;
             return false;
         }
 
@@ -495,6 +514,9 @@ namespace Bo3AudioFix
                 if (IsDefault(d.Name)) it.ForeColor = Color.DarkGreen;
                 list.Items.Add(it);
             }
+            // Size columns to their content so nothing clips at high DPI.
+            if (list.Items.Count > 0)
+                foreach (ColumnHeader ch in list.Columns) ch.Width = -2;
             list.EndUpdate();
             suppressCount = false;
             UpdateCount();
@@ -578,6 +600,21 @@ namespace Bo3AudioFix
             catch { return false; }
         }
 
+        // Probe up front rather than relying on which exception a failed
+        // File.Copy happens to throw. Steam under Program Files is common, so
+        // this path has to be deterministic.
+        private static bool CanWriteTo(string dir)
+        {
+            string probe = Path.Combine(dir, "._bo3fix_write_test.tmp");
+            try
+            {
+                File.WriteAllBytes(probe, new byte[] { 0 });
+                File.Delete(probe);
+                return true;
+            }
+            catch { return false; }
+        }
+
         private static void ExtractPayload(string destPath)
         {
             Assembly asm = Assembly.GetExecutingAssembly();
@@ -603,6 +640,13 @@ namespace Bo3AudioFix
             {
                 MessageBox.Show("Black Ops III is running. Close the game first.",
                     "Installer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!CanWriteTo(game))
+            {
+                Log("No write access to the game folder - administrator rights needed.");
+                OfferElevation(game);
                 return;
             }
 
@@ -659,8 +703,9 @@ namespace Bo3AudioFix
                 lines.Add("# set log=1 to have the game write bo3_audio.log listing what it saw");
                 lines.Add("log=0");
 
-                // ANSI: the DLL reads this with a classic-locale wide stream.
-                File.WriteAllLines(cfgPath, lines.ToArray(), Encoding.Default);
+                // UTF-8 without BOM: the DLL decodes UTF-8 explicitly, so
+                // non-ASCII device names survive on any system locale.
+                File.WriteAllLines(cfgPath, lines.ToArray(), new UTF8Encoding(false));
                 Log("Wrote bo3_audio.cfg with " + keeps.Count + " allowed device(s).");
                 Log("DONE - launch Black Ops III normally.");
 

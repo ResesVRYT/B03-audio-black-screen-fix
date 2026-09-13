@@ -40,6 +40,14 @@ If the person's Steam library sits under Program Files, Windows will refuse
 write access to the game folder. The installer detects this and offers to
 restart itself as administrator.
 
+SMARTSCREEN
+The installer is unsigned and it writes a DLL into a game folder, which is a
+combination SmartScreen and some antivirus flag on sight. Expect a "Windows
+protected your PC" box - click "More info", then "Run anyway".
+
+Anyone who would rather not take that on faith can read everything in src and
+rebuild it with build_exe.bat, using the compiler already on their PC.
+
 The device list is read from whatever PC it runs on, and "Recommended" works
 off a general rule (real hardware and the current Windows default device get
 ticked, known virtual devices do not), so it is not tied to any one system.
